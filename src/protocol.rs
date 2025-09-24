@@ -1,4 +1,4 @@
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 // RFC 1035 Section 4.1.1
 #[derive(Debug, Default)]
@@ -34,6 +34,7 @@ pub fn encode_domain_name(name: &str) -> Vec<u8> {
     encoded
 }
 
+// RFC 1035 Section 4.1.2
 #[derive(Debug)]
 pub struct DnsQuestion {
     pub qname: String,
@@ -50,6 +51,7 @@ impl DnsQuestion {
     }
 }
 
+// RFC 1035 Section 4.1.3
 #[derive(Debug)]
 pub struct DnsRecord {
     pub name: String,
@@ -59,10 +61,45 @@ pub struct DnsRecord {
     pub rdata: RData,
 }
 
+// RFC 1035 Section 3.3.13
+#[derive(Debug)]
+pub struct Soa {
+    pub mname: String,
+    pub rname: String,
+    pub serial: u32,
+    pub refresh: u32,
+    pub retry: u32,
+    pub expire: u32,
+    pub minimum: u32,
+}
+
+// RFC 1035 Section 3.3.9
+#[derive(Debug)]
+pub struct Mx {
+    pub preference: u16,
+    pub exchange: String,
+}
+
+// RFC 2782
+#[derive(Debug)]
+pub struct Srv {
+    pub priority: u16,
+    pub weight: u16,
+    pub port: u16,
+    pub target: String,
+}
+
 #[derive(Debug)]
 pub enum RData {
     A(Ipv4Addr),
-    // Other types can be added here
+    AAAA(Ipv6Addr),
+    CNAME(String),
+    MX(Mx),
+    NS(String),
+    PTR(String),
+    SOA(Soa),
+    SRV(Srv),
+    TXT(String),
 }
 
 impl DnsRecord {
@@ -74,6 +111,39 @@ impl DnsRecord {
 
         let rdata_bytes = match &self.rdata {
             RData::A(addr) => addr.octets().to_vec(),
+            RData::AAAA(addr) => addr.octets().to_vec(),
+            RData::CNAME(name) | RData::NS(name) | RData::PTR(name) => encode_domain_name(name),
+            RData::MX(mx) => {
+                let mut data = Vec::new();
+                data.extend_from_slice(&mx.preference.to_be_bytes());
+                data.extend_from_slice(&encode_domain_name(&mx.exchange));
+                data
+            }
+            RData::SOA(soa) => {
+                let mut data = Vec::new();
+                data.extend_from_slice(&encode_domain_name(&soa.mname));
+                data.extend_from_slice(&encode_domain_name(&soa.rname));
+                data.extend_from_slice(&soa.serial.to_be_bytes());
+                data.extend_from_slice(&soa.refresh.to_be_bytes());
+                data.extend_from_slice(&soa.retry.to_be_bytes());
+                data.extend_from_slice(&soa.expire.to_be_bytes());
+                data.extend_from_slice(&soa.minimum.to_be_bytes());
+                data
+            }
+            RData::SRV(srv) => {
+                let mut data = Vec::new();
+                data.extend_from_slice(&srv.priority.to_be_bytes());
+                data.extend_from_slice(&srv.weight.to_be_bytes());
+                data.extend_from_slice(&srv.port.to_be_bytes());
+                data.extend_from_slice(&encode_domain_name(&srv.target));
+                data
+            }
+            RData::TXT(txt) => {
+                let mut data = Vec::new();
+                data.push(txt.len() as u8);
+                data.extend_from_slice(txt.as_bytes());
+                data
+            }
         };
         bytes.extend_from_slice(&(rdata_bytes.len() as u16).to_be_bytes());
         bytes.extend_from_slice(&rdata_bytes);
@@ -81,6 +151,7 @@ impl DnsRecord {
     }
 }
 
+// RFC 2136
 #[derive(Default)]
 pub struct DnsMessage {
     pub header: DnsHeader,
