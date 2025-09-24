@@ -1,7 +1,7 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 // RFC 1035 Section 4.1.1
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct DnsHeader {
     pub id: u16,
     pub flags: u16,
@@ -152,7 +152,7 @@ impl DnsRecord {
 }
 
 // RFC 2136
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct DnsMessage {
     pub header: DnsHeader,
     pub questions: Vec<DnsQuestion>,
