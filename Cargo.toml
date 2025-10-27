@@ -1,8 +1,13 @@
 [package]
 name = "nsupdate"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 rand = "0.8"
+hmac = "0.12.1"
+base64 = "0.22.1"
+md-5 = "0.10.6"
+sha1 = "0.10.6"
+sha2 = "0.10.9"

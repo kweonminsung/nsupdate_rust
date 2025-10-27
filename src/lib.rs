@@ -1,11 +1,17 @@
-use std::fmt;
-use std::net::SocketAddr;
-use tokio::net::UdpSocket;
+mod builder;
+mod internal;
 
-pub mod parser;
-pub mod protocol;
-use parser::ParseError;
-use protocol::{DnsHeader, DnsMessage, DnsQuestion, DnsRecord, RData};
+use std::fmt;
+use base64::Engine;
+use tokio::net::UdpSocket;
+use base64::engine::general_purpose;
+use internal::parser::ParseError;
+use internal::protocol::{DnsMessage};
+use internal::constants::TsigAlg;
+use internal::encoder;
+
+pub use builder::UpdateMessageBuilder;
+pub use internal::protocol::{RData, DnsRecord};
 
 #[derive(Debug)]
 pub enum NsUpdateError {
@@ -37,19 +43,37 @@ impl From<ParseError> for NsUpdateError {
 }
 
 pub struct NsUpdateClient {
-    server: SocketAddr,
+    server_url: String,
+    algorithm: TsigAlg,
+    tsig_key_name: String,
+    tsig_key: Vec<u8>,
 }
 
 impl NsUpdateClient {
-    pub fn new(server: SocketAddr) -> Self {
-        Self { server }
+    pub fn new(server_url: &str, algorithm: &str, tsig_key_name: &str, tsig_key_b64: &str) -> Self {
+        let tsig_key = general_purpose::STANDARD
+            .decode(tsig_key_b64.as_bytes())
+            .expect("Invalid base64 TSIG key");
+
+        NsUpdateClient {
+            server_url: server_url.to_string(),
+            tsig_key_name: tsig_key_name.to_string(),
+            algorithm: TsigAlg::from_string(algorithm)
+                .expect("Unsupported TSIG algorithm"),
+            tsig_key,
+        }
     }
 
     pub async fn send(&self, message: &DnsMessage) -> Result<DnsMessage, NsUpdateError> {
-        let request_bytes = message.to_bytes();
+        let request_bytes = encoder::encode(message, &self.tsig_key_name, &self.algorithm, &self.tsig_key);
+
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
-        socket.connect(self.server).await?;
-        socket.send(&request_bytes).await?;
+        socket.connect(&self.server_url).await?;
+        // socket.send(&request_bytes).await?;
+
+        println!("Sending to {:?}", self.server_url);
+        let sent = socket.send(&request_bytes).await?;
+        println!("Sent {} bytes", sent);
 
         let mut response_bytes = [0u8; 512];
         let len = socket.recv(&mut response_bytes).await?;
@@ -59,61 +83,3 @@ impl NsUpdateClient {
     }
 }
 
-pub struct UpdateMessageBuilder {
-    zone: String,
-    records_to_add: Vec<DnsRecord>,
-}
-
-impl UpdateMessageBuilder {
-    pub fn new(zone: String) -> Self {
-        Self {
-            zone,
-            records_to_add: Vec::new(),
-        }
-    }
-
-    pub fn add_record(mut self, name: String, ttl: u32, rdata: RData) -> Self {
-        let rtype = match rdata {
-            RData::A(_) => 1,
-            RData::AAAA(_) => 28,
-            RData::CNAME(_) => 5,
-            RData::MX(_) => 15,
-            RData::NS(_) => 2,
-            RData::PTR(_) => 12,
-            RData::SOA(_) => 6,
-            RData::SRV(_) => 33,
-            RData::TXT(_) => 16,
-        };
-        self.records_to_add.push(DnsRecord {
-            name,
-            rtype,
-            rclass: 1, // IN
-            ttl,
-            rdata,
-        });
-        self
-    }
-
-    pub fn build(self) -> DnsMessage {
-        let header = DnsHeader {
-            id: rand::random(),
-            flags: 0x2800, // Update operation (0 0101 0 0 0 0 000 0000)
-            qdcount: 1,
-            ancount: 0,
-            nscount: self.records_to_add.len() as u16,
-            arcount: 0,
-        };
-
-        let question = DnsQuestion {
-            qname: self.zone,
-            qtype: 6,  // SOA
-            qclass: 1, // IN
-        };
-
-        DnsMessage {
-            header,
-            questions: vec![question],
-            updates: self.records_to_add,
-        }
-    }
-}
