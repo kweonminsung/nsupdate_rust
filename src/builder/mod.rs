@@ -1,106 +1,82 @@
-use crate::internal::protocol::{DnsHeader, DnsRecord, DnsUpdateMessage, RData, ZoneSection};
+use crate::EncodeError;
+use crate::internal::protocol::{
+    DnsHeader, DnsRecord, DnsUpdateMessage, RData, ZoneSection, checked_count,
+};
 
+/// Build an IN-class update, preserving the order of add and delete operations.
+///
+/// Names are absolute, with an optional trailing dot. No zone suffix is appended.
+/// Use ASCII presentation names with `\X` or `\DDD` escapes; IDNs use Punycode.
+/// Input validation is deferred until [`Self::build`]. The client adds TSIG.
 pub struct UpdateMessageBuilder {
     zone: String,
-    records_to_add: Vec<DnsRecord>,
-    records_to_delete: Vec<DnsRecord>,
-    tsig: Option<DnsRecord>, // TSIG를 DnsRecord로 보관 (Additional 마지막)
+    updates: Vec<DnsRecord>,
+    error: Option<EncodeError>,
 }
 
 impl UpdateMessageBuilder {
     pub fn new(zone: impl Into<String>) -> Self {
         Self {
             zone: zone.into(),
-            records_to_add: Vec::new(),
-            records_to_delete: Vec::new(),
-            tsig: None,
+            updates: Vec::new(),
+            error: None,
         }
     }
 
     pub fn add_record(mut self, name: impl Into<String>, ttl: u32, rdata: RData) -> Self {
-        let name = fqdn(name);
-        let rtype = match rdata {
-            RData::A(_) => 1,
-            RData::NS(_) => 2,
-            RData::CNAME(_) => 5,
-            RData::SOA { .. } => 6,
-            RData::PTR(_) => 12,
-            RData::MX { .. } => 15,
-            RData::TXT(_) => 16,
-            RData::AAAA(_) => 28,
-            RData::SRV { .. } => 33,
-            _ => panic!("Unsupported RData type for add_record"),
+        let Some(rtype) = rdata.record_type() else {
+            self.error.get_or_insert_with(|| {
+                EncodeError::InvalidRecord("An added record must have RDATA".into())
+            });
+            return self;
         };
-
-        self.records_to_add.push(DnsRecord {
-            name,
+        self.updates.push(DnsRecord {
+            name: name.into(),
             rtype,
-            rclass: 1, // IN
+            rclass: 1,
             ttl,
             rdata,
         });
         self
     }
 
-    /// RFC 2136 삭제 규격:
-    ///  - 특정 TYPE 삭제: NAME, TYPE=그 타입, CLASS=ANY(255), TTL=0, RDLENGTH=0
-    ///  - 모든 타입 삭제: TYPE=ANY(255), CLASS=ANY(255), TTL=0, RDLENGTH=0
+    /// Delete an entire RRset, or all RRsets at the name when `rtype` is ANY (255).
     pub fn delete_record(mut self, name: impl Into<String>, rtype: u16) -> Self {
-        self.records_to_delete.push(DnsRecord {
-            name: fqdn(name),
-            rtype,       // 지울 타입(또는 255=ANY)
-            rclass: 255, // CLASS=ANY
-            ttl: 0,      // TTL=0
+        self.updates.push(DnsRecord {
+            name: name.into(),
+            rtype,
+            rclass: 255,
+            ttl: 0,
             rdata: RData::Empty,
         });
         self
     }
 
-    /// TSIG를 Additional 섹션에 붙임 (선택)
-    pub fn with_tsig(mut self, tsig_record: DnsRecord) -> Self {
-        self.tsig = Some(tsig_record);
-        self
-    }
-
-    pub fn build(self) -> DnsUpdateMessage {
-        // Updates = delete 먼저, 그 다음 add (nsupdate 동작과 동일 순서)
-        let mut updates =
-            Vec::with_capacity(self.records_to_delete.len() + self.records_to_add.len());
-        updates.extend(self.records_to_delete);
-        updates.extend(self.records_to_add);
-
-        let header = DnsHeader {
-            id: rand::random(),
-            flags: 0x2800, // OPCODE = UPDATE
-            qdcount: 1,    // Zone=1
-            ancount: 0,    // Prerequisite=0
-            nscount: updates.len() as u16,
-            arcount: u16::from(self.tsig.is_some()),
-        };
-
-        let zone = ZoneSection {
-            zname: fqdn(self.zone),
-            zclass: 1, // IN
-            ztype: 6,  // SOA
-        };
-
-        let additional = self.tsig.into_iter().collect::<Vec<_>>();
-
-        DnsUpdateMessage {
-            header,
-            zone,
-            prerequisites: Vec::new(),
-            updates,
-            additional,
+    /// Validate the unsigned request, including names, data, counts and wire length.
+    /// The client also checks the final message length after adding TSIG.
+    pub fn build(self) -> Result<DnsUpdateMessage, EncodeError> {
+        if let Some(error) = self.error {
+            return Err(error);
         }
+        let message = DnsUpdateMessage {
+            header: DnsHeader {
+                id: rand::random(),
+                flags: 0x2800,
+                qdcount: 1,
+                ancount: 0,
+                nscount: checked_count("Update count", self.updates.len())?,
+                arcount: 0,
+            },
+            zone: ZoneSection {
+                zname: self.zone,
+                zclass: 1,
+                ztype: 6,
+            },
+            prerequisites: Vec::new(),
+            updates: self.updates,
+            additional: Vec::new(),
+        };
+        message.to_bytes()?;
+        Ok(message)
     }
-}
-
-/// 항상 FQDN으로 맞춰 전송 (끝의 '.' 보장)
-fn fqdn<S: Into<String>>(s: S) -> String {
-    let mut v = s.into();
-    if !v.ends_with('.') {
-        v.push('.');
-    }
-    v
 }

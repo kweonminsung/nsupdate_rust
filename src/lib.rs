@@ -9,7 +9,7 @@ use internal::encoder;
 use tokio::net::UdpSocket;
 
 pub use builder::UpdateMessageBuilder;
-pub use error::{NsUpdateError, ParseError};
+pub use error::{EncodeError, NsUpdateError, ParseError};
 pub use internal::protocol::{
     DnsHeader, DnsMessage, DnsQuestion, DnsRecord, DnsUpdateMessage, RData, ZoneSection,
 };
@@ -29,6 +29,7 @@ impl NsUpdateClient {
         tsig_key_b64: &str,
     ) -> Result<Self, NsUpdateError> {
         let tsig_key = general_purpose::STANDARD.decode(tsig_key_b64.as_bytes())?;
+        internal::protocol::encode_domain_name(tsig_key_name)?;
 
         Ok(NsUpdateClient {
             server_url: server_url.to_string(),
@@ -44,7 +45,7 @@ impl NsUpdateClient {
             &self.tsig_key_name,
             &self.algorithm,
             &self.tsig_key,
-        );
+        )?;
 
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
         socket.connect(&self.server_url).await?;

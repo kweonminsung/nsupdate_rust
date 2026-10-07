@@ -1,3 +1,11 @@
+mod name;
+mod validation;
+
+use crate::EncodeError;
+pub(crate) use name::encode_domain_name;
+use name::is_in_zone;
+pub(crate) use validation::{append_message, check_message_length, checked_count};
+
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 // RFC 1035 Section 4.1.1 – DNS Header
@@ -24,23 +32,6 @@ impl DnsHeader {
     }
 }
 
-// Encode domain name to DNS wire format (RFC 1035 Section 4.1.2)
-pub fn encode_domain_name(name: &str) -> Vec<u8> {
-    let mut encoded = Vec::new();
-    let trimmed = name.trim_end_matches('.');
-
-    for label in trimmed.split('.') {
-        if label.is_empty() {
-            continue;
-        }
-        encoded.push(label.len() as u8);
-        encoded.extend_from_slice(label.as_bytes());
-    }
-
-    encoded.push(0); // Null terminator for root
-    encoded
-}
-
 // RFC 1035 Section 4.1.2 – Question Section
 #[derive(Debug)]
 pub struct DnsQuestion {
@@ -50,11 +41,11 @@ pub struct DnsQuestion {
 }
 
 impl DnsQuestion {
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = encode_domain_name(&self.qname);
+    pub fn to_bytes(&self) -> Result<Vec<u8>, EncodeError> {
+        let mut bytes = encode_domain_name(&self.qname)?;
         bytes.extend_from_slice(&self.qtype.to_be_bytes());
         bytes.extend_from_slice(&self.qclass.to_be_bytes());
-        bytes
+        Ok(bytes)
     }
 }
 
@@ -95,14 +86,16 @@ pub enum RData {
         port: u16,
         target: String,
     },
+    /// A single UTF-8 character-string, at most 255 bytes (not characters).
     TXT(String),
     /// RFC 2136 삭제용 (RDLENGTH=0로 직렬화)
     Empty,
 }
 
 impl DnsRecord {
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = encode_domain_name(&self.name);
+    pub fn to_bytes(&self) -> Result<Vec<u8>, EncodeError> {
+        self.validate_data()?;
+        let mut bytes = encode_domain_name(&self.name)?;
         bytes.extend_from_slice(&self.rtype.to_be_bytes());
         bytes.extend_from_slice(&self.rclass.to_be_bytes());
         bytes.extend_from_slice(&self.ttl.to_be_bytes());
@@ -110,14 +103,14 @@ impl DnsRecord {
         let rdata_bytes = match &self.rdata {
             RData::A(addr) => addr.octets().to_vec(),
             RData::AAAA(addr) => addr.octets().to_vec(),
-            RData::CNAME(name) | RData::NS(name) | RData::PTR(name) => encode_domain_name(name),
+            RData::CNAME(name) | RData::NS(name) | RData::PTR(name) => encode_domain_name(name)?,
             RData::MX {
                 preference,
                 exchange,
             } => {
                 let mut data = Vec::new();
                 data.extend_from_slice(&preference.to_be_bytes());
-                data.extend_from_slice(&encode_domain_name(exchange));
+                data.extend_from_slice(&encode_domain_name(exchange)?);
                 data
             }
             RData::SOA {
@@ -130,8 +123,8 @@ impl DnsRecord {
                 minimum,
             } => {
                 let mut data = Vec::new();
-                data.extend_from_slice(&encode_domain_name(mname));
-                data.extend_from_slice(&encode_domain_name(rname));
+                data.extend_from_slice(&encode_domain_name(mname)?);
+                data.extend_from_slice(&encode_domain_name(rname)?);
                 data.extend_from_slice(&serial.to_be_bytes());
                 data.extend_from_slice(&refresh.to_be_bytes());
                 data.extend_from_slice(&retry.to_be_bytes());
@@ -149,21 +142,27 @@ impl DnsRecord {
                 data.extend_from_slice(&priority.to_be_bytes());
                 data.extend_from_slice(&weight.to_be_bytes());
                 data.extend_from_slice(&port.to_be_bytes());
-                data.extend_from_slice(&encode_domain_name(target));
+                data.extend_from_slice(&encode_domain_name(target)?);
                 data
             }
             RData::TXT(txt) => {
                 let mut data = Vec::new();
-                data.push(txt.len() as u8);
+                let length = u8::try_from(txt.len()).map_err(|_| EncodeError::LengthExceeded {
+                    field: "TXT string",
+                    length: txt.len(),
+                    max: 255,
+                })?;
+                data.push(length);
                 data.extend_from_slice(txt.as_bytes());
                 data
             }
             RData::Empty => Vec::new(),
         };
 
-        bytes.extend_from_slice(&(rdata_bytes.len() as u16).to_be_bytes());
+        let length = checked_count("RDATA", rdata_bytes.len())?;
+        bytes.extend_from_slice(&length.to_be_bytes());
         bytes.extend_from_slice(&rdata_bytes);
-        bytes
+        Ok(bytes)
     }
 }
 
@@ -176,19 +175,29 @@ pub struct DnsMessage {
 }
 
 impl DnsMessage {
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Result<Vec<u8>, EncodeError> {
+        if self.header.qdcount != checked_count("Question count", self.questions.len())?
+            || self.header.nscount != checked_count("Record count", self.updates.len())?
+            || self.header.ancount != 0
+            || self.header.arcount != 0
+        {
+            return Err(EncodeError::InvalidMessage(
+                "Header counts do not match the message sections".into(),
+            ));
+        }
         let mut bytes = self.header.to_bytes().to_vec();
-        for q in &self.questions {
-            bytes.extend_from_slice(&q.to_bytes());
+        for question in &self.questions {
+            append_message(&mut bytes, &question.to_bytes()?)?;
         }
-        for u in &self.updates {
-            bytes.extend_from_slice(&u.to_bytes());
+        for record in &self.updates {
+            append_message(&mut bytes, &record.to_bytes()?)?;
         }
-        bytes
+        Ok(bytes)
     }
 }
 
 // RFC 2136 – DNS Update Message
+#[derive(Debug)]
 pub struct DnsUpdateMessage {
     pub header: DnsHeader,
     pub zone: ZoneSection, // exactly 1 record (name, type = SOA, class = IN)
@@ -198,28 +207,43 @@ pub struct DnsUpdateMessage {
 }
 
 impl DnsUpdateMessage {
-    pub fn to_bytes(&self) -> Vec<u8> {
+    /// Serialize an unsigned IN-class UPDATE request after validating every section.
+    /// TSIG is owned by the client and must not be supplied in `additional`.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, EncodeError> {
+        self.validate_header()?;
+        let zone_name = encode_domain_name(&self.zone.zname)?;
         let mut bytes = self.header.to_bytes().to_vec();
-
-        // Zone section (1)
-        bytes.extend_from_slice(&self.zone.to_bytes());
-
-        // Prerequisite section (PRCOUNT)
-        for p in &self.prerequisites {
-            bytes.extend_from_slice(&p.to_bytes());
+        append_message(&mut bytes, &self.zone.to_bytes()?)?;
+        for record in &self.prerequisites {
+            self.validate_owner(record, &zone_name)?;
+            record.validate_prerequisite()?;
+            append_message(&mut bytes, &record.to_bytes()?)?;
         }
-
-        // Update section (UPCOUNT)
-        for u in &self.updates {
-            bytes.extend_from_slice(&u.to_bytes());
+        for record in &self.updates {
+            self.validate_owner(record, &zone_name)?;
+            record.validate_update()?;
+            append_message(&mut bytes, &record.to_bytes()?)?;
         }
-
-        // Additional section (ARCOUNT, TSIG)
-        for a in &self.additional {
-            bytes.extend_from_slice(&a.to_bytes());
+        for record in &self.additional {
+            // Supported additional records are ordinary IN records, e.g. glue.
+            if record.rclass != 1 || record.rdata.record_type().is_none() {
+                return Err(EncodeError::InvalidRecord(
+                    "Additional data must contain IN records with RDATA; the client owns TSIG"
+                        .into(),
+                ));
+            }
+            append_message(&mut bytes, &record.to_bytes()?)?;
         }
+        Ok(bytes)
+    }
 
-        bytes
+    fn validate_owner(&self, record: &DnsRecord, zone: &[u8]) -> Result<(), EncodeError> {
+        if !is_in_zone(&encode_domain_name(&record.name)?, zone) {
+            return Err(EncodeError::InvalidRecord(
+                "Record owner is outside the update zone".into(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -231,10 +255,18 @@ pub struct ZoneSection {
 }
 
 impl ZoneSection {
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = encode_domain_name(&self.zname);
+    pub fn to_bytes(&self) -> Result<Vec<u8>, EncodeError> {
+        if self.ztype != 6 || self.zclass != 1 {
+            return Err(EncodeError::InvalidMessage(
+                "Zone must have type SOA and class IN".into(),
+            ));
+        }
+        let mut bytes = encode_domain_name(&self.zname)?;
         bytes.extend_from_slice(&self.ztype.to_be_bytes());
         bytes.extend_from_slice(&self.zclass.to_be_bytes());
-        bytes
+        Ok(bytes)
     }
 }
+
+#[cfg(test)]
+mod tests;

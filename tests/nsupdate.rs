@@ -1,5 +1,5 @@
 use nsupdate::{
-    DnsMessage, DnsUpdateMessage, NsUpdateClient, NsUpdateError, ParseError, RData,
+    DnsMessage, DnsUpdateMessage, EncodeError, NsUpdateClient, NsUpdateError, ParseError, RData,
     UpdateMessageBuilder,
 };
 use std::error::Error;
@@ -40,7 +40,8 @@ fn test_client_accepts_the_public_builder_output() {
             300,
             RData::A(Ipv4Addr::new(192, 0, 2, 1)),
         )
-        .build();
+        .build()
+        .unwrap();
 
     // Compile the external caller's builder -> send path without performing I/O.
     fn accepts_response_future(_: impl Future<Output = Result<DnsMessage, NsUpdateError>>) {}
@@ -55,6 +56,33 @@ fn test_parse_errors_are_public_and_preserve_their_source() {
     assert!(matches!(
         error,
         NsUpdateError::Parse(ParseError::Incomplete)
+    ));
+    assert!(error.source().is_some());
+}
+
+#[test]
+fn test_rejects_invalid_tsig_key_names() {
+    for name in ["", "key..test", "key.test.."] {
+        assert!(matches!(
+            NsUpdateClient::new("127.0.0.1:53", "sha256", name, "dGVzdA=="),
+            Err(NsUpdateError::Encode(EncodeError::InvalidDomainName(_)))
+        ));
+    }
+}
+
+#[tokio::test]
+async fn test_send_validates_mutated_request_before_network_io() {
+    let client =
+        NsUpdateClient::new("invalid server address", "sha256", "test-key.", "dGVzdA==").unwrap();
+    let mut message = UpdateMessageBuilder::new("example.test")
+        .add_record("host.example.test", 300, RData::A(Ipv4Addr::LOCALHOST))
+        .build()
+        .unwrap();
+    message.updates[0].name = "outside.test".into();
+    let error = client.send(&message).await.unwrap_err();
+    assert!(matches!(
+        error,
+        NsUpdateError::Encode(EncodeError::InvalidRecord(_))
     ));
     assert!(error.source().is_some());
 }

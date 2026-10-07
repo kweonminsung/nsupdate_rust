@@ -6,6 +6,7 @@ pub enum NsUpdateError {
     Base64DecodeError(base64::DecodeError),
     Io(std::io::Error),
     Parse(ParseError),
+    Encode(EncodeError),
 }
 
 impl fmt::Display for NsUpdateError {
@@ -17,6 +18,7 @@ impl fmt::Display for NsUpdateError {
             Self::Base64DecodeError(error) => write!(f, "Invalid base64 TSIG key: {error}"),
             Self::Io(error) => write!(f, "IO error: {error}"),
             Self::Parse(error) => write!(f, "Parse error: {error}"),
+            Self::Encode(error) => write!(f, "Encode error: {error}"),
         }
     }
 }
@@ -28,6 +30,7 @@ impl std::error::Error for NsUpdateError {
             Self::Base64DecodeError(error) => Some(error),
             Self::Io(error) => Some(error),
             Self::Parse(error) => Some(error),
+            Self::Encode(error) => Some(error),
         }
     }
 }
@@ -49,6 +52,40 @@ impl From<base64::DecodeError> for NsUpdateError {
         Self::Base64DecodeError(error)
     }
 }
+
+impl From<EncodeError> for NsUpdateError {
+    fn from(error: EncodeError) -> Self {
+        Self::Encode(error)
+    }
+}
+
+/// A request cannot be represented as a valid DNS UPDATE message.
+#[derive(Debug, PartialEq, Eq)]
+pub enum EncodeError {
+    InvalidDomainName(String),
+    InvalidRecord(String),
+    InvalidMessage(String),
+    LengthExceeded {
+        field: &'static str,
+        length: usize,
+        max: usize,
+    },
+}
+
+impl fmt::Display for EncodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidDomainName(reason) => write!(f, "Invalid domain name: {reason}"),
+            Self::InvalidRecord(reason) => write!(f, "Invalid record: {reason}"),
+            Self::InvalidMessage(reason) => write!(f, "Invalid message: {reason}"),
+            Self::LengthExceeded { field, length, max } => {
+                write!(f, "{field} length {length} exceeds {max}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for EncodeError {}
 
 #[derive(Debug)]
 pub enum ParseError {
