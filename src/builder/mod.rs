@@ -3,11 +3,8 @@ use crate::internal::protocol::{
     DnsHeader, DnsRecord, DnsUpdateMessage, RData, ZoneSection, checked_count,
 };
 
-/// Build an IN-class update, preserving the order of add and delete operations.
-///
-/// Names are absolute, with an optional trailing dot. No zone suffix is appended.
+/// Build an IN-class UPDATE in call order. Names are absolute, with an optional trailing dot.
 /// Use ASCII presentation names with `\X` or `\DDD` escapes; IDNs use Punycode.
-/// Input validation is deferred until [`Self::build`]. The client adds TSIG.
 pub struct UpdateMessageBuilder {
     zone: String,
     updates: Vec<DnsRecord>,
@@ -52,8 +49,7 @@ impl UpdateMessageBuilder {
         self
     }
 
-    /// Validate the unsigned request, including names, data, counts and wire length.
-    /// The client also checks the final message length after adding TSIG.
+    /// Validate and build the unsigned request.
     pub fn build(self) -> Result<DnsUpdateMessage, EncodeError> {
         if let Some(error) = self.error {
             return Err(error);

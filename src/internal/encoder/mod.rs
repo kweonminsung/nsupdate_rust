@@ -1,137 +1,88 @@
-use crate::EncodeError;
+use crate::internal::auth::{calculate_mac, canonical_name, unix_time, variables};
 use crate::internal::constants::TsigAlg;
 use crate::internal::protocol::{
     DnsUpdateMessage, check_message_length, checked_count, encode_domain_name,
 };
-use hmac::{Hmac, Mac};
-use md5::Md5;
-use sha1::Sha1;
-use sha2::{Sha224, Sha256, Sha384, Sha512};
+use crate::{EncodeError, TsigKey};
 
-pub fn encode(
+pub(crate) struct EncodedRequest {
+    pub bytes: Vec<u8>,
+    pub mac: Option<Vec<u8>>,
+    pub id: u16,
+    pub zone: Vec<u8>,
+}
+
+pub(crate) fn encode(
     message: &DnsUpdateMessage,
-    tsig_key_name: &str,
+    key: Option<&TsigKey>,
+) -> Result<EncodedRequest, EncodeError> {
+    match key {
+        Some(key) => encode_at(
+            message,
+            &key.name,
+            &key.algorithm,
+            &key.secret,
+            unix_time()?,
+        ),
+        None => Ok(EncodedRequest {
+            bytes: message.to_bytes()?,
+            mac: None,
+            id: message.header.id,
+            zone: encode_domain_name(&message.zone.zname)?,
+        }),
+    }
+}
+
+pub(crate) fn encode_at(
+    message: &DnsUpdateMessage,
+    key_name: &str,
     algorithm: &TsigAlg,
-    tsig_key: &[u8],
-) -> Result<Vec<u8>, EncodeError> {
-    // Get the unsigned DNS UPDATE message bytes
-    let unsigned_bytes = message.to_bytes()?;
-    let key_name = encode_domain_name(tsig_key_name)?;
-    let algorithm_name = encode_domain_name(algorithm.to_name())?;
+    key: &[u8],
+    time: u64,
+) -> Result<EncodedRequest, EncodeError> {
+    if time >= 1 << 48 {
+        return Err(EncodeError::InvalidMessage(
+            "TSIG time exceeds the 48-bit range".into(),
+        ));
+    }
+    let unsigned = message.to_bytes()?;
+    let key_name = canonical_name(key_name)?;
+    let algorithm_name = canonical_name(algorithm.to_name())?;
     let arcount = checked_count(
         "Additional count including TSIG",
         usize::from(message.header.arcount) + 1,
     )?;
+    let fudge: u16 = 300;
 
-    // Get current time for TSIG
-    let time_signed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| EncodeError::InvalidMessage("System clock precedes the UNIX epoch".into()))?
-        .as_secs();
+    // Only responses include the request MAC prefix (RFC 8945 4.3.1).
+    let mut data = unsigned.clone();
+    data.extend_from_slice(&variables(&key_name, &algorithm_name, time, fudge, 0, &[]));
+    let mac = calculate_mac(algorithm, key, &data);
 
-    // RFC 2845 constants
-    let fudge: u16 = 300; // 5 minutes
-    let original_id = message.header.id;
-    let error: u16 = 0;
-    let other_len: u16 = 0;
-
-    // Build HMAC input (RFC 2845 Section 3.4.2)
-    let mut signing_data = Vec::new();
-
-    // Request MAC: empty for initial request
-    signing_data.extend_from_slice(&0u16.to_be_bytes());
-
-    // DNS message (without TSIG)
-    signing_data.extend_from_slice(&unsigned_bytes);
-
-    // TSIG RDATA fields in order (no RR header)
-    signing_data.extend_from_slice(&key_name);
-    signing_data.extend_from_slice(&255u16.to_be_bytes()); // CLASS = ANY (255)
-    signing_data.extend_from_slice(&0u32.to_be_bytes()); // TTL = 0
-    signing_data.extend_from_slice(&algorithm_name);
-
-    // 48-bit Time Signed  = upper 16 bits + lower 32 bits
-    let mut time_buf = [0u8; 6];
-    time_buf[..2].copy_from_slice(&((time_signed >> 32) as u16).to_be_bytes());
-    time_buf[2..].copy_from_slice(&(time_signed as u32).to_be_bytes());
-    signing_data.extend_from_slice(&time_buf);
-
-    signing_data.extend_from_slice(&fudge.to_be_bytes());
-    signing_data.extend_from_slice(&error.to_be_bytes());
-    signing_data.extend_from_slice(&other_len.to_be_bytes());
-
-    // Compute HMAC
-    let mac = calculate_mac(algorithm, tsig_key, &signing_data);
-
-    // Assemble final DNS message with TSIG RR
-    let mut header_bytes = message.header.to_bytes().to_vec();
-    header_bytes[10..12].copy_from_slice(&arcount.to_be_bytes());
-
-    let mut signed_message = header_bytes;
-    signed_message.extend_from_slice(&unsigned_bytes[12..]); // body (skip old header)
-
-    // TSIG RR (RFC 2845 Section 3.2)
-    signed_message.extend_from_slice(&key_name);
-    signed_message.extend_from_slice(&250u16.to_be_bytes()); // TYPE = 250 (TSIG)
-    signed_message.extend_from_slice(&255u16.to_be_bytes()); // CLASS = ANY (255)
-    signed_message.extend_from_slice(&0u32.to_be_bytes()); // TTL = 0
-
-    // RDATA
-    let mut rdata = Vec::new();
-    rdata.extend_from_slice(&algorithm_name);
-    rdata.extend_from_slice(&time_buf); // 48-bit time
+    let mut rdata = algorithm_name;
+    rdata.extend_from_slice(&time.to_be_bytes()[2..]);
     rdata.extend_from_slice(&fudge.to_be_bytes());
-    rdata.extend_from_slice(&(mac.len() as u16).to_be_bytes());
+    rdata.extend_from_slice(&checked_count("TSIG MAC", mac.len())?.to_be_bytes());
     rdata.extend_from_slice(&mac);
-    rdata.extend_from_slice(&original_id.to_be_bytes());
-    rdata.extend_from_slice(&error.to_be_bytes());
-    rdata.extend_from_slice(&other_len.to_be_bytes());
+    rdata.extend_from_slice(&message.header.id.to_be_bytes());
+    rdata.extend_from_slice(&0u16.to_be_bytes()); // Error
+    rdata.extend_from_slice(&0u16.to_be_bytes()); // Other Len
 
-    // RDLENGTH + RDATA
-    signed_message.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
-    signed_message.extend_from_slice(&rdata);
-
-    check_message_length(signed_message.len())?;
-    Ok(signed_message)
-}
-
-fn calculate_mac(algorithm: &TsigAlg, key: &[u8], data: &[u8]) -> Vec<u8> {
-    match algorithm {
-        TsigAlg::MD5 => {
-            let mut mac = Hmac::<Md5>::new_from_slice(key).expect("HMAC can take key of any size");
-            mac.update(data);
-            mac.finalize().into_bytes().to_vec()
-        }
-        TsigAlg::SHA1 => {
-            let mut mac = Hmac::<Sha1>::new_from_slice(key).expect("HMAC can take key of any size");
-            mac.update(data);
-            mac.finalize().into_bytes().to_vec()
-        }
-        TsigAlg::SHA224 => {
-            let mut mac =
-                Hmac::<Sha224>::new_from_slice(key).expect("HMAC can take key of any size");
-            mac.update(data);
-            mac.finalize().into_bytes().to_vec()
-        }
-        TsigAlg::SHA256 => {
-            let mut mac =
-                Hmac::<Sha256>::new_from_slice(key).expect("HMAC can take key of any size");
-            mac.update(data);
-            mac.finalize().into_bytes().to_vec()
-        }
-        TsigAlg::SHA384 => {
-            let mut mac =
-                Hmac::<Sha384>::new_from_slice(key).expect("HMAC can take key of any size");
-            mac.update(data);
-            mac.finalize().into_bytes().to_vec()
-        }
-        TsigAlg::SHA512 => {
-            let mut mac =
-                Hmac::<Sha512>::new_from_slice(key).expect("HMAC can take key of any size");
-            mac.update(data);
-            mac.finalize().into_bytes().to_vec()
-        }
-    }
+    check_message_length(unsigned.len() + key_name.len() + 10 + rdata.len())?;
+    let mut bytes = unsigned;
+    bytes[10..12].copy_from_slice(&arcount.to_be_bytes());
+    bytes.extend_from_slice(&key_name);
+    bytes.extend_from_slice(&250u16.to_be_bytes());
+    bytes.extend_from_slice(&255u16.to_be_bytes());
+    bytes.extend_from_slice(&0u32.to_be_bytes());
+    bytes.extend_from_slice(&checked_count("TSIG RDATA", rdata.len())?.to_be_bytes());
+    bytes.extend_from_slice(&rdata);
+    Ok(EncodedRequest {
+        bytes,
+        mac: Some(mac),
+        id: message.header.id,
+        zone: encode_domain_name(&message.zone.zname)?,
+    })
 }
 
 #[cfg(test)]

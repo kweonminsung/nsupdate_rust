@@ -7,6 +7,10 @@ pub enum NsUpdateError {
     Io(std::io::Error),
     Parse(ParseError),
     Encode(EncodeError),
+    Auth(AuthError),
+    TruncatedResponse,
+    InvalidTimeout,
+    Timeout,
 }
 
 impl fmt::Display for NsUpdateError {
@@ -19,6 +23,12 @@ impl fmt::Display for NsUpdateError {
             Self::Io(error) => write!(f, "IO error: {error}"),
             Self::Parse(error) => write!(f, "Parse error: {error}"),
             Self::Encode(error) => write!(f, "Encode error: {error}"),
+            Self::Auth(error) => write!(f, "Authentication error: {error}"),
+            Self::TruncatedResponse => write!(f, "Truncated DNS response; TCP is required"),
+            Self::InvalidTimeout => {
+                write!(f, "Timeout must be positive and fit the platform clock")
+            }
+            Self::Timeout => write!(f, "DNS update timed out"),
         }
     }
 }
@@ -26,11 +36,15 @@ impl fmt::Display for NsUpdateError {
 impl std::error::Error for NsUpdateError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::InvalidAlgorithm(_) => None,
+            Self::InvalidAlgorithm(_)
+            | Self::TruncatedResponse
+            | Self::InvalidTimeout
+            | Self::Timeout => None,
             Self::Base64DecodeError(error) => Some(error),
             Self::Io(error) => Some(error),
             Self::Parse(error) => Some(error),
             Self::Encode(error) => Some(error),
+            Self::Auth(error) => Some(error),
         }
     }
 }
@@ -91,6 +105,7 @@ impl std::error::Error for EncodeError {}
 pub enum ParseError {
     Incomplete,
     InvalidDomainName,
+    InvalidMessage(&'static str),
     UnsupportedRecordType(u16),
     Utf8(std::string::FromUtf8Error),
 }
@@ -100,6 +115,7 @@ impl fmt::Display for ParseError {
         match self {
             Self::Incomplete => write!(f, "Incomplete data"),
             Self::InvalidDomainName => write!(f, "Invalid domain name"),
+            Self::InvalidMessage(reason) => write!(f, "Invalid DNS message: {reason}"),
             Self::UnsupportedRecordType(record_type) => {
                 write!(f, "Unsupported record type: {record_type}")
             }
@@ -122,3 +138,52 @@ impl From<std::string::FromUtf8Error> for ParseError {
         Self::Utf8(error)
     }
 }
+
+impl From<AuthError> for NsUpdateError {
+    fn from(error: AuthError) -> Self {
+        Self::Auth(error)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum AuthError {
+    MissingTsig,
+    UnexpectedTsig,
+    KeyMismatch,
+    AlgorithmMismatch,
+    InvalidMacLength,
+    InvalidMac,
+    TimeOutsideWindow,
+    ResponseMismatch(&'static str),
+    /// An authenticated TSIG error from the server.
+    ServerError {
+        code: u16,
+        server_time: Option<u64>,
+    },
+}
+
+impl fmt::Display for AuthError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingTsig => write!(f, "Response has no TSIG"),
+            Self::UnexpectedTsig => write!(f, "Unsigned request received a TSIG response"),
+            Self::KeyMismatch => write!(f, "TSIG key name differs from the request"),
+            Self::AlgorithmMismatch => write!(f, "TSIG algorithm differs from the request"),
+            Self::InvalidMacLength => write!(f, "Response requires a full-length TSIG MAC"),
+            Self::InvalidMac => write!(f, "TSIG MAC verification failed"),
+            Self::TimeOutsideWindow => write!(f, "TSIG time is outside its validity window"),
+            Self::ResponseMismatch(reason) => {
+                write!(f, "Response does not match the request: {reason}")
+            }
+            Self::ServerError { code, server_time } => {
+                write!(f, "Authenticated TSIG error {code}")?;
+                if let Some(time) = server_time {
+                    write!(f, " (server UNIX time {time})")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl std::error::Error for AuthError {}

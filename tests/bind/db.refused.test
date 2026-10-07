@@ -1,0 +1,4 @@
+$TTL 300
+@ IN SOA ns.refused.test. hostmaster.refused.test. (1 300 300 3600 300)
+  IN NS ns.refused.test.
+ns IN A 127.0.0.1

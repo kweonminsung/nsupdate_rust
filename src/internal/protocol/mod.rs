@@ -8,7 +8,6 @@ pub(crate) use validation::{append_message, check_message_length, checked_count}
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-// RFC 1035 Section 4.1.1 – DNS Header
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct DnsHeader {
     pub id: u16,
@@ -32,24 +31,6 @@ impl DnsHeader {
     }
 }
 
-// RFC 1035 Section 4.1.2 – Question Section
-#[derive(Debug)]
-pub struct DnsQuestion {
-    pub qname: String,
-    pub qtype: u16,
-    pub qclass: u16,
-}
-
-impl DnsQuestion {
-    pub fn to_bytes(&self) -> Result<Vec<u8>, EncodeError> {
-        let mut bytes = encode_domain_name(&self.qname)?;
-        bytes.extend_from_slice(&self.qtype.to_be_bytes());
-        bytes.extend_from_slice(&self.qclass.to_be_bytes());
-        Ok(bytes)
-    }
-}
-
-// RFC 1035 Section 4.1.3 – Resource Record
 #[derive(Debug)]
 pub struct DnsRecord {
     pub name: String,
@@ -59,7 +40,6 @@ pub struct DnsRecord {
     pub rdata: RData,
 }
 
-// RFC 1035 Section 3.3 – RDATA Types
 #[derive(Debug)]
 pub enum RData {
     A(Ipv4Addr),
@@ -88,7 +68,7 @@ pub enum RData {
     },
     /// A single UTF-8 character-string, at most 255 bytes (not characters).
     TXT(String),
-    /// RFC 2136 삭제용 (RDLENGTH=0로 직렬화)
+    /// Empty RDATA for deletions and prerequisites.
     Empty,
 }
 
@@ -166,49 +146,42 @@ impl DnsRecord {
     }
 }
 
-// RFC 1035 – DNS Message
-#[derive(Default, Debug)]
-pub struct DnsMessage {
+/// An UPDATE response. Authentication depends on the client's TSIG configuration.
+#[derive(Debug)]
+pub struct UpdateResponse {
     pub header: DnsHeader,
-    pub questions: Vec<DnsQuestion>,
-    pub updates: Vec<DnsRecord>,
+    pub zone: Option<ZoneSection>,
+    pub(crate) rcode: u16,
+    pub(crate) authenticated: bool,
 }
 
-impl DnsMessage {
-    pub fn to_bytes(&self) -> Result<Vec<u8>, EncodeError> {
-        if self.header.qdcount != checked_count("Question count", self.questions.len())?
-            || self.header.nscount != checked_count("Record count", self.updates.len())?
-            || self.header.ancount != 0
-            || self.header.arcount != 0
-        {
-            return Err(EncodeError::InvalidMessage(
-                "Header counts do not match the message sections".into(),
-            ));
-        }
-        let mut bytes = self.header.to_bytes().to_vec();
-        for question in &self.questions {
-            append_message(&mut bytes, &question.to_bytes()?)?;
-        }
-        for record in &self.updates {
-            append_message(&mut bytes, &record.to_bytes()?)?;
-        }
-        Ok(bytes)
+impl UpdateResponse {
+    /// Whether the response passed TSIG verification.
+    pub fn is_authenticated(&self) -> bool {
+        self.authenticated
+    }
+
+    /// DNS response code, including the EDNS extended bits when present.
+    pub fn rcode(&self) -> u16 {
+        self.rcode
+    }
+
+    pub fn is_success(&self) -> bool {
+        self.rcode == 0 && self.header.flags & 0x0200 == 0
     }
 }
 
-// RFC 2136 – DNS Update Message
 #[derive(Debug)]
 pub struct DnsUpdateMessage {
     pub header: DnsHeader,
-    pub zone: ZoneSection, // exactly 1 record (name, type = SOA, class = IN)
-    pub prerequisites: Vec<DnsRecord>, // optional
-    pub updates: Vec<DnsRecord>, // add/delete records
+    pub zone: ZoneSection,
+    pub prerequisites: Vec<DnsRecord>,
+    pub updates: Vec<DnsRecord>,
     pub additional: Vec<DnsRecord>,
 }
 
 impl DnsUpdateMessage {
-    /// Serialize an unsigned IN-class UPDATE request after validating every section.
-    /// TSIG is owned by the client and must not be supplied in `additional`.
+    /// Validate and serialize an unsigned IN-class UPDATE.
     pub fn to_bytes(&self) -> Result<Vec<u8>, EncodeError> {
         self.validate_header()?;
         let zone_name = encode_domain_name(&self.zone.zname)?;
@@ -225,7 +198,6 @@ impl DnsUpdateMessage {
             append_message(&mut bytes, &record.to_bytes()?)?;
         }
         for record in &self.additional {
-            // Supported additional records are ordinary IN records, e.g. glue.
             if record.rclass != 1 || record.rdata.record_type().is_none() {
                 return Err(EncodeError::InvalidRecord(
                     "Additional data must contain IN records with RDATA; the client owns TSIG"
@@ -249,9 +221,9 @@ impl DnsUpdateMessage {
 
 #[derive(Debug)]
 pub struct ZoneSection {
-    pub zname: String, // ex) "example.com."
-    pub zclass: u16,   // IN = 1
-    pub ztype: u16,    // SOA = 6
+    pub zname: String,
+    pub zclass: u16,
+    pub ztype: u16,
 }
 
 impl ZoneSection {

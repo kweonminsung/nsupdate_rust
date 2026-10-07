@@ -1,6 +1,5 @@
 use crate::EncodeError;
 
-/// Encode an absolute DNS presentation name, with an optional trailing dot.
 /// Accept ASCII and RFC 1035 escapes (`\X` and `\DDD`); IDNs must use Punycode.
 pub(crate) fn encode_domain_name(name: &str) -> Result<Vec<u8>, EncodeError> {
     if name == "." {

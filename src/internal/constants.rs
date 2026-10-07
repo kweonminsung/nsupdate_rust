@@ -23,6 +23,17 @@ impl TsigAlg {
         }
     }
 
+    pub(crate) fn mac_length(&self) -> usize {
+        match self {
+            Self::MD5 => 16,
+            Self::SHA1 => 20,
+            Self::SHA224 => 28,
+            Self::SHA256 => 32,
+            Self::SHA384 => 48,
+            Self::SHA512 => 64,
+        }
+    }
+
     pub(crate) fn to_name(&self) -> &'static str {
         match self {
             TsigAlg::MD5 => "hmac-md5.sig-alg.reg.int",

@@ -30,14 +30,21 @@ fn test_serializes_all_update_sections_before_appending_tsig() {
     });
     message.header.arcount = 1;
     let unsigned = message.to_bytes().unwrap();
-    let signed = encode(&message, "test-key.", &TsigAlg::SHA256, b"test").unwrap();
+    let request = encode(&message, None).unwrap();
+    assert_eq!(request.bytes, unsigned);
+    assert!(request.mac.is_none());
+    let signed = encode(
+        &message,
+        Some(&TsigKey::new("sha256", "test-key.", "dGVzdA==").unwrap()),
+    )
+    .unwrap();
 
     assert_eq!(
-        &signed[..12],
+        &signed.bytes[..12],
         &[0x12, 0x34, 0x28, 0, 0, 1, 0, 1, 0, 1, 0, 2]
     );
-    assert_eq!(&signed[12..unsigned.len()], &unsigned[12..]);
-    assert!(signed[unsigned.len()..].starts_with(b"\x08test-key\x00\x00\xfa\x00\xff"));
+    assert_eq!(&signed.bytes[12..unsigned.len()], &unsigned[12..]);
+    assert!(signed.bytes[unsigned.len()..].starts_with(b"\x08test-key\x00\x00\xfa\x00\xff"));
     assert_eq!(message.header.arcount, 1);
 }
 
@@ -55,20 +62,38 @@ fn test_message_length_limit_includes_tsig() {
     // TSIG: 10-byte key name + 10-byte RR header + 61-byte SHA256 RDATA.
     assert_eq!(message.to_bytes().unwrap().len(), 65454);
     assert_eq!(
-        encode(&message, "test-key.", &TsigAlg::SHA256, b"test")
-            .unwrap()
-            .len(),
+        encode(
+            &message,
+            Some(&TsigKey::new("sha256", "test-key.", "dGVzdA==").unwrap())
+        )
+        .unwrap()
+        .bytes
+        .len(),
         65535
     );
 
     message.updates.last_mut().unwrap().rdata = RData::TXT("x".repeat(11));
     assert_eq!(message.to_bytes().unwrap().len(), 65455);
     assert!(matches!(
-        encode(&message, "test-key.", &TsigAlg::SHA256, b"test"),
+        encode(
+            &message,
+            Some(&TsigKey::new("sha256", "test-key.", "dGVzdA==").unwrap())
+        ),
         Err(EncodeError::LengthExceeded {
             field: "DNS message",
             length: 65536,
             max: 65535
+        })
+    ));
+
+    message.updates.last_mut().unwrap().rdata = RData::TXT("x".repeat(91));
+    assert_eq!(encode(&message, None).unwrap().bytes.len(), 65535);
+    message.updates.last_mut().unwrap().rdata = RData::TXT("x".repeat(92));
+    assert!(matches!(
+        encode(&message, None),
+        Err(EncodeError::LengthExceeded {
+            field: "DNS message",
+            ..
         })
     ));
 }
