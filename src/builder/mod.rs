@@ -1,6 +1,4 @@
-use crate::internal::protocol::{
-    DnsHeader, DnsUpdateMessage, DnsRecord, RData, ZoneSection,
-};
+use crate::internal::protocol::{DnsHeader, DnsRecord, DnsUpdateMessage, RData, ZoneSection};
 
 pub struct UpdateMessageBuilder {
     zone: String,
@@ -50,11 +48,10 @@ impl UpdateMessageBuilder {
     pub fn delete_record(mut self, name: impl Into<String>, rtype: u16) -> Self {
         self.records_to_delete.push(DnsRecord {
             name: fqdn(name),
-            rtype,         // 지울 타입(또는 255=ANY)
-            rclass: 255,   // CLASS=ANY
-            ttl: 0,        // TTL=0
-            // ⚠️ encoder가 RDLENGTH=0으로 쓰도록 해야 함 (아래 2) 패치 참고)
-            rdata: RData::Empty, 
+            rtype,       // 지울 타입(또는 255=ANY)
+            rclass: 255, // CLASS=ANY
+            ttl: 0,      // TTL=0
+            rdata: RData::Empty,
         });
         self
     }
@@ -67,17 +64,19 @@ impl UpdateMessageBuilder {
 
     pub fn build(self) -> DnsUpdateMessage {
         // Updates = delete 먼저, 그 다음 add (nsupdate 동작과 동일 순서)
-        let mut updates = Vec::with_capacity(self.records_to_delete.len() + self.records_to_add.len());
+        let mut updates =
+            Vec::with_capacity(self.records_to_delete.len() + self.records_to_add.len());
         updates.extend(self.records_to_delete);
         updates.extend(self.records_to_add);
 
-        let mut header = DnsHeader::default();
-        header.id = rand::random();
-        header.flags = 0x2800; // OPCODE = UPDATE
-        header.qdcount = 1;                              // Zone=1
-        header.ancount = 0;                              // Prerequisite=0 (지금은 미사용)
-        header.nscount = updates.len() as u16;           // Update 개수
-        header.arcount = if self.tsig.is_some() { 1 } else { 0 }; // Additional(TSIG) 개수
+        let header = DnsHeader {
+            id: rand::random(),
+            flags: 0x2800, // OPCODE = UPDATE
+            qdcount: 1,    // Zone=1
+            ancount: 0,    // Prerequisite=0
+            nscount: updates.len() as u16,
+            arcount: u16::from(self.tsig.is_some()),
+        };
 
         let zone = ZoneSection {
             zname: fqdn(self.zone),

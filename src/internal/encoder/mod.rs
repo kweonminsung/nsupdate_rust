@@ -1,12 +1,12 @@
 use crate::internal::constants::TsigAlg;
-use crate::internal::protocol::{DnsMessage, encode_domain_name};
+use crate::internal::protocol::{DnsUpdateMessage, encode_domain_name};
 use hmac::{Hmac, Mac};
 use md5::Md5;
 use sha1::Sha1;
 use sha2::{Sha224, Sha256, Sha384, Sha512};
 
 pub fn encode(
-    message: &DnsMessage,
+    message: &DnsUpdateMessage,
     tsig_key_name: &str,
     algorithm: &TsigAlg,
     tsig_key: &[u8],
@@ -100,24 +100,31 @@ fn calculate_mac(algorithm: &TsigAlg, key: &[u8], data: &[u8]) -> Vec<u8> {
             mac.finalize().into_bytes().to_vec()
         }
         TsigAlg::SHA224 => {
-            let mut mac = Hmac::<Sha224>::new_from_slice(key).expect("HMAC can take key of any size");
+            let mut mac =
+                Hmac::<Sha224>::new_from_slice(key).expect("HMAC can take key of any size");
             mac.update(data);
             mac.finalize().into_bytes().to_vec()
         }
         TsigAlg::SHA256 => {
-            let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC can take key of any size");
+            let mut mac =
+                Hmac::<Sha256>::new_from_slice(key).expect("HMAC can take key of any size");
             mac.update(data);
             mac.finalize().into_bytes().to_vec()
         }
         TsigAlg::SHA384 => {
-            let mut mac = Hmac::<Sha384>::new_from_slice(key).expect("HMAC can take key of any size");
+            let mut mac =
+                Hmac::<Sha384>::new_from_slice(key).expect("HMAC can take key of any size");
             mac.update(data);
             mac.finalize().into_bytes().to_vec()
         }
         TsigAlg::SHA512 => {
-            let mut mac = Hmac::<Sha512>::new_from_slice(key).expect("HMAC can take key of any size");
+            let mut mac =
+                Hmac::<Sha512>::new_from_slice(key).expect("HMAC can take key of any size");
             mac.update(data);
             mac.finalize().into_bytes().to_vec()
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

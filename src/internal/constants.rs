@@ -1,3 +1,5 @@
+use crate::NsUpdateError;
+
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum TsigAlg {
     MD5,
@@ -9,21 +11,15 @@ pub(crate) enum TsigAlg {
 }
 
 impl TsigAlg {
-    pub(crate) fn from_string(alg: &str) -> Option<Self> {
+    pub(crate) fn from_string(alg: &str) -> Result<Self, NsUpdateError> {
         match alg {
-            "md5" => Some(TsigAlg::MD5),
-            "hmac-md5" => Some(TsigAlg::MD5),
-            "sha1" => Some(TsigAlg::SHA1),
-            "hmac-sha1" => Some(TsigAlg::SHA1),
-            "sha224" => Some(TsigAlg::SHA224),
-            "hmac-sha224" => Some(TsigAlg::SHA224),
-            "sha256" => Some(TsigAlg::SHA256),
-            "hmac-sha256" => Some(TsigAlg::SHA256),
-            "sha384" => Some(TsigAlg::SHA384),
-            "hmac-sha384" => Some(TsigAlg::SHA384),
-            "sha512" => Some(TsigAlg::SHA512),
-            "hmac-sha512" => Some(TsigAlg::SHA512),
-            _ => None,
+            "md5" | "hmac-md5" => Ok(TsigAlg::MD5),
+            "sha1" | "hmac-sha1" => Ok(TsigAlg::SHA1),
+            "sha224" | "hmac-sha224" => Ok(TsigAlg::SHA224),
+            "sha256" | "hmac-sha256" => Ok(TsigAlg::SHA256),
+            "sha384" | "hmac-sha384" => Ok(TsigAlg::SHA384),
+            "sha512" | "hmac-sha512" => Ok(TsigAlg::SHA512),
+            _ => Err(NsUpdateError::InvalidAlgorithm(alg.to_string())),
         }
     }
 

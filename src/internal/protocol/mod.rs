@@ -74,7 +74,10 @@ pub enum RData {
     A(Ipv4Addr),
     AAAA(Ipv6Addr),
     CNAME(String),
-    MX { preference: u16, exchange: String },
+    MX {
+        preference: u16,
+        exchange: String,
+    },
     NS(String),
     PTR(String),
     SOA {
@@ -86,7 +89,12 @@ pub enum RData {
         expire: u32,
         minimum: u32,
     },
-    SRV { priority: u16, weight: u16, port: u16, target: String },
+    SRV {
+        priority: u16,
+        weight: u16,
+        port: u16,
+        target: String,
+    },
     TXT(String),
     /// RFC 2136 삭제용 (RDLENGTH=0로 직렬화)
     Empty,
@@ -103,7 +111,10 @@ impl DnsRecord {
             RData::A(addr) => addr.octets().to_vec(),
             RData::AAAA(addr) => addr.octets().to_vec(),
             RData::CNAME(name) | RData::NS(name) | RData::PTR(name) => encode_domain_name(name),
-            RData::MX { preference, exchange } => {
+            RData::MX {
+                preference,
+                exchange,
+            } => {
                 let mut data = Vec::new();
                 data.extend_from_slice(&preference.to_be_bytes());
                 data.extend_from_slice(&encode_domain_name(exchange));
@@ -180,9 +191,9 @@ impl DnsMessage {
 // RFC 2136 – DNS Update Message
 pub struct DnsUpdateMessage {
     pub header: DnsHeader,
-    pub zone: ZoneSection,             // exactly 1 record (name, type = SOA, class = IN)
+    pub zone: ZoneSection, // exactly 1 record (name, type = SOA, class = IN)
     pub prerequisites: Vec<DnsRecord>, // optional
-    pub updates: Vec<DnsRecord>,       // add/delete records
+    pub updates: Vec<DnsRecord>, // add/delete records
     pub additional: Vec<DnsRecord>,
 }
 
@@ -214,9 +225,9 @@ impl DnsUpdateMessage {
 
 #[derive(Debug)]
 pub struct ZoneSection {
-    pub zname: String,   // ex) "example.com."
-    pub zclass: u16,     // IN = 1
-    pub ztype: u16,      // SOA = 6
+    pub zname: String, // ex) "example.com."
+    pub zclass: u16,   // IN = 1
+    pub ztype: u16,    // SOA = 6
 }
 
 impl ZoneSection {
