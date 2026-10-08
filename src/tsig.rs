@@ -12,8 +12,12 @@ pub struct TsigKey {
 }
 
 impl TsigKey {
+    /// Decode a nonempty base64 secret and validate the key name and algorithm.
     pub fn new(algorithm: &str, name: &str, secret_b64: &str) -> Result<Self, NsUpdateError> {
         let secret = general_purpose::STANDARD.decode(secret_b64)?;
+        if secret.is_empty() {
+            return Err(NsUpdateError::EmptyTsigKey);
+        }
         encode_domain_name(name)?;
         Ok(Self {
             algorithm: TsigAlg::from_string(algorithm)?,

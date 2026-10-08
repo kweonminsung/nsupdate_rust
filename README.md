@@ -48,7 +48,9 @@ Example output:
 Update succeeded; authenticated=true
 ```
 
-Transport, encoding, parsing, and authentication failures return `Err(NsUpdateError)`.
+Request encoding and I/O failures return `Err(NsUpdateError)`.
+Response validation failures are returned immediately for TCP and unsigned UDP;
+signed UDP discards invalid responses as described below.
 A DNS error such as `REFUSED` returns `Ok(UpdateResponse)` with `is_success() == false`;
 check `rcode()` for the server's response code.
 
@@ -79,12 +81,15 @@ in one TXT record and arbitrary raw RDATA are not supported.
 Updates use class IN and one explicitly specified zone. Names are absolute,
 with an optional trailing dot. Use ASCII names, DNS `\X` / `\DDD` escapes,
 or Punycode for internationalized names. TTLs must be in `0..=2147483647`.
+SOA additions and replacements require a nonzero serial. Prerequisites can
+compare an existing SOA whose serial is zero.
 
 ## Authentication and transport
 
 `Some(TsigKey)` signs requests and requires verified TSIG responses. Supported
 algorithms are `md5`, `sha1`, `sha224`, `sha256`, `sha384`, and `sha512`;
-the `hmac-` prefix is also accepted. Key debug output redacts the secret.
+the `hmac-` prefix is also accepted. Empty secrets return
+`NsUpdateError::EmptyTsigKey`. Key debug output redacts the secret.
 
 Pass `None` for unsigned updates. The server must allow them for the zone.
 This example uses TCP to delete an A RRset from the unsigned test zone:
@@ -119,6 +124,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 Server addresses use `host:port` or `[IPv6]:port`, such as `[::1]:53`.
 I/O failures are returned without automatically resending the update.
 
+Signed UDP requests discard malformed responses and responses that fail TSIG or
+request matching checks, then continue receiving on the same socket without
+resending the request. Authenticated DNS and TSIG errors are returned immediately.
+Only a validated truncated response triggers the automatic TCP fallback.
+
 ## Timeouts and limits
 
 The default timeout is `None`. `with_timeout(Duration)` and
@@ -126,6 +136,9 @@ The default timeout is `None`. `with_timeout(Duration)` and
 network I/O, including UDP-to-TCP fallback. `with_timeout(None)` disables it.
 Zero or excessively large durations return `NsUpdateError::InvalidTimeout`;
 expiration returns `NsUpdateError::Timeout`.
+Discarded UDP responses do not reset the deadline. With no timeout, a signed UDP
+request can wait indefinitely if the server only sends invalid responses,
+including unsigned TSIG errors caused by a wrong key.
 
 DNS messages, including TSIG, cannot exceed 65,535 bytes.
 

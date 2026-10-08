@@ -31,6 +31,17 @@ fn test_returns_an_error_for_an_invalid_base64_key() {
 }
 
 #[test]
+fn test_rejects_empty_tsig_secrets_for_all_algorithms() {
+    for algorithm in ["md5", "sha1", "sha224", "sha256", "sha384", "sha512"] {
+        let error = TsigKey::new(algorithm, "test-key.", "").unwrap_err();
+        assert!(matches!(error, NsUpdateError::EmptyTsigKey));
+        assert!(error.source().is_none());
+        assert_eq!(error.to_string(), "TSIG key must not be empty");
+        assert!(TsigKey::new(algorithm, "test-key.", "dGVzdA==").is_ok());
+    }
+}
+
+#[test]
 fn test_client_accepts_the_public_builder_output() {
     let message: DnsUpdateMessage = UpdateMessageBuilder::new("example.test")
         .add_record(

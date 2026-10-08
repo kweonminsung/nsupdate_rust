@@ -1,4 +1,7 @@
-use nsupdate::{DnsRecord, DnsUpdateMessage, EncodeError, RData, UpdateMessageBuilder};
+use nsupdate::{
+    DnsRecord, DnsUpdateMessage, EncodeError, NsUpdateClient, NsUpdateError, RData, TsigKey,
+    UpdateMessageBuilder,
+};
 use std::net::Ipv4Addr;
 
 fn empty_update() -> DnsUpdateMessage {
@@ -12,6 +15,68 @@ fn address_record() -> DnsRecord {
         rclass: 1,
         ttl: 300,
         rdata: RData::A(Ipv4Addr::new(192, 0, 2, 1)),
+    }
+}
+
+fn soa(serial: u32) -> RData {
+    RData::SOA {
+        mname: "ns.example.test".into(),
+        rname: "hostmaster.example.test".into(),
+        serial,
+        refresh: 300,
+        retry: 300,
+        expire: 3600,
+        minimum: 300,
+    }
+}
+
+#[test]
+fn test_soa_update_serial_must_be_nonzero() {
+    assert!(matches!(
+        UpdateMessageBuilder::new("example.test")
+            .add_record("example.test", 300, soa(0))
+            .build(),
+        Err(EncodeError::InvalidRecord(_))
+    ));
+    for serial in [1, 1 << 31, u32::MAX] {
+        assert!(
+            UpdateMessageBuilder::new("example.test")
+                .add_record("example.test", 300, soa(serial))
+                .build()
+                .is_ok()
+        );
+    }
+    // Prerequisites and value deletions do not change the SOA serial.
+    assert!(
+        UpdateMessageBuilder::new("example.test")
+            .require_rrset_equals("example.test", [soa(0)])
+            .delete_record_value("example.test", soa(0))
+            .build()
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn test_revalidates_mutated_soa_serial_before_network_io() {
+    let mut message = UpdateMessageBuilder::new("example.test")
+        .add_record("example.test", 300, soa(1))
+        .build()
+        .unwrap();
+    message.updates[0].rdata = soa(0);
+    assert!(matches!(
+        message.to_bytes(),
+        Err(EncodeError::InvalidRecord(_))
+    ));
+    for key in [
+        None,
+        Some(TsigKey::new("sha256", "test-key.", "dGVzdA==").unwrap()),
+    ] {
+        assert!(matches!(
+            NsUpdateClient::new("invalid server address", key)
+                .send(&message)
+                .await,
+            Err(NsUpdateError::Encode(EncodeError::InvalidRecord(_)))
+        ));
     }
 }
 

@@ -129,15 +129,21 @@ async fn test_authenticated_refusal_and_wrong_secret() {
             &address,
             Some(TsigKey::new("sha256", "test-sha256.", "d3Jvbmc=").unwrap()),
         )
-        .with_transport(transport);
+        .with_transport(transport)
+        .with_timeout(Duration::from_millis(500))
+        .unwrap();
         let error = timeout(Duration::from_secs(5), wrong.send(&update))
             .await
             .unwrap()
             .unwrap_err();
-        assert!(matches!(
-            error,
-            NsUpdateError::Auth(AuthError::InvalidMacLength)
-        ));
+        match transport {
+            Transport::Udp => assert!(matches!(error, NsUpdateError::Timeout)),
+            Transport::Tcp => assert!(matches!(
+                error,
+                NsUpdateError::Auth(AuthError::InvalidMacLength)
+            )),
+            Transport::Auto => unreachable!(),
+        }
     }
 }
 

@@ -4,6 +4,7 @@ use std::fmt;
 pub enum NsUpdateError {
     InvalidAlgorithm(String),
     Base64DecodeError(base64::DecodeError),
+    EmptyTsigKey,
     Io(std::io::Error),
     Parse(ParseError),
     Encode(EncodeError),
@@ -20,6 +21,7 @@ impl fmt::Display for NsUpdateError {
                 write!(f, "Unsupported TSIG algorithm: {algorithm}")
             }
             Self::Base64DecodeError(error) => write!(f, "Invalid base64 TSIG key: {error}"),
+            Self::EmptyTsigKey => write!(f, "TSIG key must not be empty"),
             Self::Io(error) => write!(f, "IO error: {error}"),
             Self::Parse(error) => write!(f, "Parse error: {error}"),
             Self::Encode(error) => write!(f, "Encode error: {error}"),
@@ -37,6 +39,7 @@ impl std::error::Error for NsUpdateError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::InvalidAlgorithm(_)
+            | Self::EmptyTsigKey
             | Self::TruncatedResponse
             | Self::InvalidTimeout
             | Self::Timeout => None,

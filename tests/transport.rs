@@ -1,8 +1,8 @@
 mod support;
 
 use nsupdate::{
-    AuthError, DnsUpdateMessage, EncodeError, NsUpdateClient, NsUpdateError, RData, Transport,
-    TsigKey, UpdateMessageBuilder,
+    DnsUpdateMessage, EncodeError, NsUpdateClient, NsUpdateError, RData, Transport, TsigKey,
+    UpdateMessageBuilder,
 };
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -189,6 +189,12 @@ async fn test_auto_retries_validated_tc_over_tcp_with_the_same_request_and_peer(
             let server = async {
                 let mut bytes = [0; 4096];
                 let (length, peer) = socket.recv_from(&mut bytes).await.unwrap();
+                if algorithm.is_some() {
+                    let mut forged_tc = response(&bytes[..length], algorithm, 0xaa00);
+                    let index = forged_tc.len() - 7;
+                    forged_tc[index] ^= 1;
+                    socket.send_to(&forged_tc, peer).await.unwrap();
+                }
                 socket
                     .send_to(&response(&bytes[..length], algorithm, 0xaa00), peer)
                     .await
@@ -216,7 +222,9 @@ async fn test_invalid_tc_does_not_trigger_tcp() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let socket = UdpSocket::bind(address).await.unwrap();
-        let client = client(&address.to_string(), Some("sha256"));
+        let client = client(&address.to_string(), Some("sha256"))
+            .with_timeout(Duration::from_millis(100))
+            .unwrap();
         let request = request();
         let server = async {
             let mut bytes = [0; 4096];
@@ -239,22 +247,7 @@ async fn test_invalid_tc_does_not_trigger_tcp() {
         })
         .await
         .unwrap();
-        match mutation {
-            "unsigned" => assert!(matches!(
-                result,
-                Err(NsUpdateError::Auth(AuthError::MissingTsig))
-            )),
-            "mac" => assert!(matches!(
-                result,
-                Err(NsUpdateError::Auth(AuthError::InvalidMac))
-            )),
-            "id" => assert!(matches!(
-                result,
-                Err(NsUpdateError::Auth(AuthError::ResponseMismatch(_)))
-            )),
-            "trailing" => assert!(matches!(result, Err(NsUpdateError::Parse(_)))),
-            _ => unreachable!(),
-        }
+        assert!(matches!(result, Err(NsUpdateError::Timeout)), "{mutation}");
         assert!(
             timeout(Duration::from_millis(20), listener.accept())
                 .await

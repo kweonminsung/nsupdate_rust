@@ -59,20 +59,35 @@ async fn connect_udp(server: &str) -> io::Result<UdpSocket> {
     Err(last_error)
 }
 
-pub(crate) async fn exchange_udp(
-    server: &str,
-    request: &[u8],
-) -> Result<(Vec<u8>, SocketAddr), NsUpdateError> {
-    let socket = connect_udp(server).await?;
-    let peer = socket.peer_addr()?;
-    if socket.send(request).await? != request.len() {
-        return Err(io::Error::new(io::ErrorKind::WriteZero, "Incomplete UDP send").into());
+pub(crate) struct UdpExchange {
+    socket: UdpSocket,
+    response: Vec<u8>,
+}
+
+impl UdpExchange {
+    pub(crate) async fn send(server: &str, request: &[u8]) -> io::Result<Self> {
+        let socket = connect_udp(server).await?;
+        if socket.send(request).await? != request.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "Incomplete UDP send",
+            ));
+        }
+        Ok(Self {
+            socket,
+            // One extra byte detects datagrams beyond the DNS wire-size limit.
+            response: vec![0; 65536],
+        })
     }
-    // One extra byte detects datagrams beyond the DNS wire-size limit.
-    let mut response = vec![0; 65536];
-    let length = socket.recv(&mut response).await?;
-    response.truncate(length);
-    Ok((response, peer))
+
+    pub(crate) async fn receive(&mut self) -> io::Result<&[u8]> {
+        let length = self.socket.recv(&mut self.response).await?;
+        Ok(&self.response[..length])
+    }
+
+    pub(crate) fn peer_addr(&self) -> io::Result<SocketAddr> {
+        self.socket.peer_addr()
+    }
 }
 
 pub(crate) async fn exchange_tcp(

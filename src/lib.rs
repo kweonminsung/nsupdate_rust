@@ -42,9 +42,8 @@ impl NsUpdateClient {
         self
     }
 
-    /// Limit address resolution and I/O together. `None` (default) disables the limit.
-    /// Accepts `Duration`, `Some(Duration)`, or `None`.
-    /// Zero and durations that exceed the platform clock range are rejected.
+    /// Set a shared timeout for address resolution and I/O; `None` (default) disables it.
+    /// Accepts `Duration` or `Option<Duration>`; rejects zero or clock overflow.
     pub fn with_timeout(
         mut self,
         timeout: impl Into<Option<Duration>>,
@@ -59,9 +58,9 @@ impl NsUpdateClient {
         Ok(self)
     }
 
-    /// Send an UPDATE, signing and authenticating it when a TSIG key is configured.
-    /// Check `is_success()` or `rcode()` on an `Ok` result for the update outcome.
-    /// I/O failures are returned without automatically resending the update.
+    /// Send an UPDATE; check `is_success()` or `rcode()` on an `Ok` response.
+    /// I/O errors are not retried. Signed UDP ignores malformed or unauthenticated
+    /// replies within the original timeout. Without a timeout, it may wait indefinitely.
     pub async fn send(&self, message: &DnsUpdateMessage) -> Result<UpdateResponse, NsUpdateError> {
         let request = encoder::encode(message, self.tsig_key.as_ref())?;
 
@@ -81,14 +80,26 @@ impl NsUpdateClient {
             let response = transport::exchange_tcp(&self.server_url, &request.bytes).await?;
             return self.decode_response(&response, request);
         }
-        let (response, peer) = transport::exchange_udp(&self.server_url, &request.bytes).await?;
-        match self.decode_response(&response, request) {
-            Err(NsUpdateError::TruncatedResponse) if self.transport == Transport::Auto => {
-                // Keep the same peer and signed request when switching to TCP.
-                let response = transport::exchange_tcp(peer, &request.bytes).await?;
-                self.decode_response(&response, request)
+        let mut exchange = transport::UdpExchange::send(&self.server_url, &request.bytes).await?;
+        loop {
+            let response = exchange.receive().await?;
+            match self.decode_response(response, request) {
+                Err(NsUpdateError::TruncatedResponse) if self.transport == Transport::Auto => {
+                    // Reuse the peer and signed request for TCP fallback.
+                    let response =
+                        transport::exchange_tcp(exchange.peer_addr()?, &request.bytes).await?;
+                    return self.decode_response(&response, request);
+                }
+                Err(error @ NsUpdateError::Auth(AuthError::ServerError { .. })) => {
+                    return Err(error);
+                }
+                Err(NsUpdateError::Parse(_) | NsUpdateError::Auth(_))
+                    if self.tsig_key.is_some() =>
+                {
+                    // RFC 8945 5.4: keep waiting within the original deadline.
+                }
+                result => return result,
             }
-            result => result,
         }
     }
 

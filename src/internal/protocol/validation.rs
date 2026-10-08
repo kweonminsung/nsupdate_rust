@@ -70,6 +70,10 @@ impl DnsRecord {
     }
 
     pub(super) fn validate_update(&self) -> Result<(), EncodeError> {
+        // RFC 2136 4.2: SOA updates require a nonzero serial.
+        if self.rclass == 1 && matches!(self.rdata, RData::SOA { serial: 0, .. }) {
+            return Err(invalid("SOA updates require a nonzero serial"));
+        }
         match self.rclass {
             1 if self.rdata.record_type().is_some() => Ok(()),
             255 if self.ttl == 0 && matches!(self.rdata, RData::Empty) => Ok(()),

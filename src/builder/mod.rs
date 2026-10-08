@@ -89,9 +89,8 @@ impl UpdateMessageBuilder {
         self.require_rrset_presence(name, rtype, 254)
     }
 
-    /// Require the entire RRset to match these values, ignoring order and TTL.
-    /// Values must be nonempty and have one record type, inferred from their RDATA.
-    /// Repeated calls for the same name and type combine their values.
+    /// Require an exact RRset match, ignoring order and TTL.
+    /// Values must be nonempty and of one type; calls for the same name/type combine.
     pub fn require_rrset_equals(
         mut self,
         name: impl Into<String>,
