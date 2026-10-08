@@ -218,18 +218,25 @@ async fn test_auto_retries_validated_tc_over_tcp_with_the_same_request_and_peer(
 
 #[tokio::test]
 async fn test_invalid_tc_does_not_trigger_tcp() {
-    for mutation in ["unsigned", "mac", "id", "trailing"] {
+    for (algorithm, mutation) in [
+        (None, "id"),
+        (None, "trailing"),
+        (Some("sha256"), "unsigned"),
+        (Some("sha256"), "mac"),
+        (Some("sha256"), "id"),
+        (Some("sha256"), "trailing"),
+    ] {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let socket = UdpSocket::bind(address).await.unwrap();
-        let client = client(&address.to_string(), Some("sha256"))
+        let client = client(&address.to_string(), algorithm)
             .with_timeout(Duration::from_millis(100))
             .unwrap();
         let request = request();
         let server = async {
             let mut bytes = [0; 4096];
             let (length, peer) = socket.recv_from(&mut bytes).await.unwrap();
-            let mut packet = response(&bytes[..length], Some("sha256"), 0xaa00);
+            let mut packet = response(&bytes[..length], algorithm, 0xaa00);
             match mutation {
                 "unsigned" => packet = response(&bytes[..length], None, 0xaa00),
                 "mac" => {

@@ -59,8 +59,8 @@ impl NsUpdateClient {
     }
 
     /// Send an UPDATE; check `is_success()` or `rcode()` on an `Ok` response.
-    /// I/O errors are not retried. Signed UDP ignores malformed or unauthenticated
-    /// replies within the original timeout. Without a timeout, it may wait indefinitely.
+    /// I/O errors are not retried. UDP ignores malformed, mismatched, or invalid
+    /// TSIG replies within the original timeout. Without a timeout, it may wait indefinitely.
     pub async fn send(&self, message: &DnsUpdateMessage) -> Result<UpdateResponse, NsUpdateError> {
         let request = encoder::encode(message, self.tsig_key.as_ref())?;
 
@@ -93,10 +93,9 @@ impl NsUpdateClient {
                 Err(error @ NsUpdateError::Auth(AuthError::ServerError { .. })) => {
                     return Err(error);
                 }
-                Err(NsUpdateError::Parse(_) | NsUpdateError::Auth(_))
-                    if self.tsig_key.is_some() =>
-                {
-                    // RFC 8945 5.4: keep waiting within the original deadline.
+                Err(NsUpdateError::Parse(_) | NsUpdateError::Auth(_)) => {
+                    // Invalid datagrams do not end the transaction, including
+                    // failed TSIG checks (RFC 8945 5.4). Keep the same deadline.
                 }
                 result => return result,
             }

@@ -49,8 +49,8 @@ Update succeeded; authenticated=true
 ```
 
 Request encoding and I/O failures return `Err(NsUpdateError)`.
-Response validation failures are returned immediately for TCP and unsigned UDP;
-signed UDP discards invalid responses as described below.
+Response validation failures are returned immediately for TCP;
+UDP discards invalid responses as described below.
 A DNS error such as `REFUSED` returns `Ok(UpdateResponse)` with `is_success() == false`;
 check `rcode()` for the server's response code.
 
@@ -124,9 +124,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 Server addresses use `host:port` or `[IPv6]:port`, such as `[::1]:53`.
 I/O failures are returned without automatically resending the update.
 
-Signed UDP requests discard malformed responses and responses that fail TSIG or
-request matching checks, then continue receiving on the same socket without
-resending the request. Authenticated DNS and TSIG errors are returned immediately.
+UDP requests discard malformed responses and responses that fail request matching
+or TSIG checks, then continue receiving on the same socket without resending the
+request. This also applies to unexpected TSIG responses to unsigned requests.
+Valid DNS errors and authenticated TSIG errors are returned immediately.
 Only a validated truncated response triggers the automatic TCP fallback.
 
 ## Timeouts and limits
@@ -136,7 +137,7 @@ The default timeout is `None`. `with_timeout(Duration)` and
 network I/O, including UDP-to-TCP fallback. `with_timeout(None)` disables it.
 Zero or excessively large durations return `NsUpdateError::InvalidTimeout`;
 expiration returns `NsUpdateError::Timeout`.
-Discarded UDP responses do not reset the deadline. With no timeout, a signed UDP
+Discarded UDP responses do not reset the deadline. With no timeout, a UDP
 request can wait indefinitely if the server only sends invalid responses,
 including unsigned TSIG errors caused by a wrong key.
 

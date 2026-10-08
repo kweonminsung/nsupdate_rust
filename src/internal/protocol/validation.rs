@@ -38,8 +38,9 @@ impl RData {
 
 impl DnsRecord {
     pub(super) fn validate_data(&self) -> Result<(), EncodeError> {
-        // Unknown data types remain valid for RRset deletions and prerequisites.
-        if matches!(self.rtype, 0 | 41 | 249..=254 | 65535) {
+        // RFC 6895 3.1 reserves 128..=255 for query/meta types. ANY (255)
+        // remains valid for name prerequisites and deleting all RRsets.
+        if matches!(self.rtype, 0 | 41 | 128..=254 | 65535) {
             return Err(invalid(
                 "Reserved and query/meta types cannot be used as record data",
             ));

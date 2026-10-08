@@ -109,7 +109,7 @@ fn test_new_methods_validate_owners_and_rdata_at_build_time() {
 
 #[test]
 fn test_rrset_presence_rejects_meta_types_and_accepts_unknown_data_types() {
-    for rtype in [0, 41, 249, 250, 251, 252, 253, 254, 255, 65535] {
+    for rtype in [0, 41, 65535].into_iter().chain(128..=255) {
         for builder in [
             UpdateMessageBuilder::new("example.test")
                 .require_rrset_exists("host.example.test", rtype),
@@ -122,7 +122,7 @@ fn test_rrset_presence_rejects_meta_types_and_accepts_unknown_data_types() {
             );
         }
     }
-    for rtype in [1, 28, 257, 65280] {
+    for rtype in [1, 28, 127, 256, 257, 61439, 65280, 65534] {
         assert!(
             UpdateMessageBuilder::new("example.test")
                 .require_rrset_exists("host.example.test", rtype)

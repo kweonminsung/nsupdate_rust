@@ -197,7 +197,7 @@ fn test_builder_checks_zone_owner_and_rdata_names() {
 
 #[test]
 fn test_rejects_reserved_and_meta_record_types_but_allows_unknown_rrset_deletion() {
-    for rtype in [0, 41, 249, 250, 251, 252, 253, 254, 65535] {
+    for rtype in [0, 41, 65535].into_iter().chain(128..=254) {
         assert!(
             UpdateMessageBuilder::new("example.test")
                 .delete_record("host.example.test", rtype)
@@ -206,7 +206,7 @@ fn test_rejects_reserved_and_meta_record_types_but_allows_unknown_rrset_deletion
             "{rtype}"
         );
     }
-    for rtype in [1, 255, 65280] {
+    for rtype in [1, 127, 255, 256, 257, 61439, 65280, 65534] {
         assert!(
             UpdateMessageBuilder::new("example.test")
                 .delete_record("host.example.test", rtype)
@@ -214,6 +214,41 @@ fn test_rejects_reserved_and_meta_record_types_but_allows_unknown_rrset_deletion
                 .is_ok(),
             "{rtype}"
         );
+    }
+}
+
+#[tokio::test]
+async fn test_revalidates_mutated_meta_types_before_network_io() {
+    for section in ["update", "exists", "absent"] {
+        for rtype in [128, 248] {
+            let mut message = UpdateMessageBuilder::new("example.test")
+                .delete_record("host.example.test", 1)
+                .require_rrset_exists("exists.example.test", 1)
+                .require_rrset_absent("absent.example.test", 1)
+                .build()
+                .unwrap();
+            let record = match section {
+                "update" => &mut message.updates[0],
+                "exists" => &mut message.prerequisites[0],
+                "absent" => &mut message.prerequisites[1],
+                _ => unreachable!(),
+            };
+            record.rtype = rtype;
+            for key in [
+                None,
+                Some(TsigKey::new("sha256", "test-key.", "dGVzdA==").unwrap()),
+            ] {
+                assert!(
+                    matches!(
+                        NsUpdateClient::new("invalid server address", key)
+                            .send(&message)
+                            .await,
+                        Err(NsUpdateError::Encode(EncodeError::InvalidRecord(_)))
+                    ),
+                    "{section} TYPE{rtype}"
+                );
+            }
+        }
     }
 }
 
