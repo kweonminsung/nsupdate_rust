@@ -24,7 +24,7 @@ impl fmt::Display for NsUpdateError {
             Self::Parse(error) => write!(f, "Parse error: {error}"),
             Self::Encode(error) => write!(f, "Encode error: {error}"),
             Self::Auth(error) => write!(f, "Authentication error: {error}"),
-            Self::TruncatedResponse => write!(f, "Truncated DNS response; TCP is required"),
+            Self::TruncatedResponse => write!(f, "Truncated DNS response"),
             Self::InvalidTimeout => {
                 write!(f, "Timeout must be positive and fit the platform clock")
             }

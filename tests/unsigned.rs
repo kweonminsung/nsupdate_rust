@@ -1,11 +1,14 @@
-use nsupdate::{AuthError, NsUpdateClient, NsUpdateError, UpdateMessageBuilder, UpdateResponse};
+use nsupdate::{
+    AuthError, NsUpdateClient, NsUpdateError, Transport, UpdateMessageBuilder, UpdateResponse,
+};
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
 async fn exchange(mutate: impl FnOnce(&mut Vec<u8>)) -> Result<UpdateResponse, NsUpdateError> {
     let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    let client = NsUpdateClient::new(&socket.local_addr().unwrap().to_string(), None);
+    let client = NsUpdateClient::new(&socket.local_addr().unwrap().to_string(), None)
+        .with_transport(Transport::Udp);
     let mut request = UpdateMessageBuilder::new("example.test")
         .delete_record("host.example.test", 1)
         .build()

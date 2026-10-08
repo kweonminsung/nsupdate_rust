@@ -15,10 +15,12 @@ fn client(address: &str) -> NsUpdateClient {
 #[test]
 fn test_rejects_zero_and_unrepresentable_timeouts() {
     for duration in [Duration::ZERO, Duration::MAX] {
-        assert!(matches!(
+        for result in [
+            client("127.0.0.1:53").with_timeout(duration),
             client("127.0.0.1:53").with_timeout(Some(duration)),
-            Err(NsUpdateError::InvalidTimeout)
-        ));
+        ] {
+            assert!(matches!(result, Err(NsUpdateError::InvalidTimeout)));
+        }
     }
     assert!(client("127.0.0.1:53").with_timeout(None).is_ok());
     assert!(
@@ -33,7 +35,7 @@ async fn test_times_out_without_a_response_and_can_be_used_again() {
     let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let address = socket.local_addr().unwrap().to_string();
     let client = client(&address)
-        .with_timeout(Some(Duration::from_millis(100)))
+        .with_timeout(Duration::from_millis(100))
         .unwrap();
     let request = UpdateMessageBuilder::new("example.test").build().unwrap();
     let mut bytes = vec![0; 65536];

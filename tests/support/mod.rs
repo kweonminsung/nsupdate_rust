@@ -34,6 +34,10 @@ fn mac(algorithm: &str, data: &[u8]) -> Vec<u8> {
 }
 
 pub fn response(request: &[u8], algorithm: &str, rcode: u8, padding: bool) -> Vec<u8> {
+    response_with_flags(request, algorithm, 0xa800 | u16::from(rcode), padding)
+}
+
+pub fn response_with_flags(request: &[u8], algorithm: &str, flags: u16, padding: bool) -> Vec<u8> {
     let key_name = name("test-key");
     let algorithm_name = name(&if algorithm == "md5" {
         "hmac-md5.sig-alg.reg.int".into()
@@ -68,7 +72,8 @@ pub fn response(request: &[u8], algorithm: &str, rcode: u8, padding: bool) -> Ve
     );
 
     let mut answer = request[..2].to_vec();
-    answer.extend_from_slice(&[0xa8, rcode, 0, 0, 0, 0, 0, 0, 0, u8::from(padding)]);
+    answer.extend_from_slice(&flags.to_be_bytes());
+    answer.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, u8::from(padding)]);
     if padding {
         // Pad the response beyond 512 bytes.
         answer.extend_from_slice(&[0, 0, 41, 4, 208, 0, 0, 0, 0, 2, 92, 0, 12, 2, 88]);
