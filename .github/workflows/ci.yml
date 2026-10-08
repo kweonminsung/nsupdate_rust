@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "develop"]
+  pull_request:
+    branches: ["main", "develop"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+
+      - name: Check formatting
+        run: cargo +stable fmt --all -- --check
+
+      - name: Clippy
+        run: cargo +stable clippy --locked --all-targets -- -D warnings
+
+      - name: Check documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo +stable doc --locked --no-deps
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        toolchain: ["stable", "1.88.0"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: rustup toolchain install "${{ matrix.toolchain }}" --profile minimal
+
+      - name: Run tests and documentation examples
+        run: cargo +${{ matrix.toolchain }} test --locked
+
+  bind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Install DNS query tool
+        run: sudo apt-get update && sudo apt-get install -y dnsutils
+
+      - name: Start BIND
+        run: |
+          docker run -d --rm --name nsupdate-test \
+            -p 127.0.0.1:15354:53/udp -p 127.0.0.1:15354:53/tcp \
+            --mount type=bind,src="$PWD/tests/bind",dst=/fixtures,readonly \
+            --entrypoint named ubuntu/bind9:9.20-26.04 -g -c /fixtures/named.conf
+
+      - name: Wait for the test zones
+        run: |
+          for attempt in {1..30}; do
+            if dig @127.0.0.1 -p 15354 example.test SOA +short +time=1 +tries=1 | grep -q '^ns[.]example[.]test[.] ' &&
+               dig @127.0.0.1 -p 15354 unsigned.test SOA +short +time=1 +tries=1 | grep -q '^ns[.]unsigned[.]test[.] ' &&
+               dig @127.0.0.1 -p 15354 refused.test SOA +short +time=1 +tries=1 | grep -q '^ns[.]refused[.]test[.] '; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "BIND did not load the test zones"
+          exit 1
+
+      - name: Run BIND tests
+        env:
+          NSUPDATE_TEST_SERVER: 127.0.0.1:15354
+        run: cargo +stable test --locked --test bind -- --ignored
+
+      - name: Show BIND logs on failure
+        if: failure()
+        run: docker logs nsupdate-test
+
+      - name: Stop BIND
+        if: always()
+        run: |
+          if docker container inspect nsupdate-test > /dev/null 2>&1; then
+            docker stop nsupdate-test
+          fi
+
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Check package contents
+        run: cargo +stable package --locked --list
+
+      - name: Verify publish package
+        run: cargo +stable publish --locked --dry-run

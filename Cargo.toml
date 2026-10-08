@@ -2,12 +2,25 @@
 name = "nsupdate"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+authors = ["kweonminsung"]
+description = "An asynchronous DNS UPDATE client for BIND9 with optional TSIG authentication"
+repository = "https://github.com/kweonminsung/nsupdate_rust"
+documentation = "https://docs.rs/nsupdate"
+readme = "README.md"
+license = "MPL-2.0"
+keywords = ["dns", "bind9", "nsupdate", "tsig", "rfc2136"]
+categories = ["network-programming", "asynchronous"]
+include = ["src/**", "tests/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["io-util", "net", "time"] }
 rand = "0.8"
 hmac = "0.12.1"
 base64 = "0.22.1"
 md-5 = "0.10.6"
 sha1 = "0.10.6"
 sha2 = "0.10.9"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

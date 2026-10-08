@@ -1,14 +1,4 @@
-//! Start the isolated BIND fixture from the repository root:
-//! ```sh
-//! docker run --rm --name nsupdate-test -p 127.0.0.1:15353:53/udp -p 127.0.0.1:15353:53/tcp \
-//!   --mount type=bind,src="$PWD/tests/bind",dst=/fixtures,readonly \
-//!   --entrypoint named ubuntu/bind9:9.20-26.04 -g -c /fixtures/named.conf
-//! ```
-//! Run the tests once the zone is loaded, then stop the fixture:
-//! ```sh
-//! NSUPDATE_TEST_SERVER=127.0.0.1:15353 cargo test --locked --test bind -- --ignored
-//! docker stop nsupdate-test
-//! ```
+//! Requires the isolated BIND fixture described in README.md.
 use nsupdate::{
     AuthError, NsUpdateClient, NsUpdateError, RData, Transport, TsigKey, UpdateMessageBuilder,
 };
