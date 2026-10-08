@@ -17,6 +17,9 @@ use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
+#[path = "bind/builder.rs"]
+mod builder;
+
 fn client(algorithm: &str, transport: Transport) -> NsUpdateClient {
     let address = std::env::var("NSUPDATE_TEST_SERVER")
         .expect("set NSUPDATE_TEST_SERVER to the isolated BIND fixture");
