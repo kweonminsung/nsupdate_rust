@@ -14,7 +14,7 @@ categories = ["network-programming", "asynchronous"]
 include = ["src/**", "tests/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
 
 [dependencies]
-tokio = { version = "1", features = ["io-util", "net", "time"] }
+tokio = { version = "1.54.1", features = ["io-util", "net", "time"] }
 rand = "0.10.3"
 hmac = "0.13.0"
 base64 = "0.23.1"
@@ -23,4 +23,4 @@ sha1 = "0.11.0"
 sha2 = "0.11.1"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread"] }
