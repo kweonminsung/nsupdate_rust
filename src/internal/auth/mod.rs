@@ -1,7 +1,7 @@
 use crate::internal::protocol::encode_domain_name;
 use crate::internal::{constants::TsigAlg, decoder, encoder::EncodedRequest};
 use crate::{AuthError, EncodeError, NsUpdateError, UpdateResponse};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use md5::Md5;
 use sha1::Sha1;
 use sha2::{Sha224, Sha256, Sha384, Sha512};
