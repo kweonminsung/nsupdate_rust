@@ -16,7 +16,7 @@ include = ["src/**", "tests/**", "Cargo.toml", "Cargo.lock", "README.md", "LICEN
 [dependencies]
 tokio = { version = "1", features = ["io-util", "net", "time"] }
 rand = "0.8"
-hmac = "0.12.1"
+hmac = "0.13.0"
 base64 = "0.23.1"
 md-5 = "0.10.6"
 sha1 = "0.10.6"
