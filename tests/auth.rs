@@ -1,6 +1,6 @@
 mod support;
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use nsupdate::{
     AuthError, NsUpdateClient, NsUpdateError, TsigKey, UpdateMessageBuilder, UpdateResponse,
 };
